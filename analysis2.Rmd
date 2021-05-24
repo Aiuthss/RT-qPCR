@@ -1,0 +1,147 @@
+---
+title: "RT-qPCR analysis sample"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(tidyverse)
+library(ggsignif)
+```
+```{r}
+standard=1
+group=factor(c(0,0,1,0,0,1,1,1,0,0,1,0,1,0),levels=c(0,1))
+levels(group) <- c("WT","KO")
+```
+
+```{r}
+tb <- read_csv("sample2.csv", skip=7)
+tb
+```
+
+```{r}
+tb2 <- tb %>%
+  select(2,3,10) %>% 
+  drop_na()
+
+colnames(tb2) <- c("sample","target","Ct")
+
+tb2 <- tb2 %>% 
+  mutate(sample=parse_number(sample)) %>% 
+  mutate(expression=2**(-Ct)) %>% 
+  select(-Ct) %>% 
+  group_by(sample,target) %>% 
+  summarize(expression=mean(expression)) %>% 
+  ungroup()
+tb2
+```
+
+```{r}
+tb3 <- tb2 %>% 
+  arrange(target,sample) %>% 
+  pivot_wider(names_from = target, values_from=expression) %>% 
+  mutate(group=group)
+tb3
+```
+
+
+```{r}
+expression <- tb3 %>% 
+  select(!c(sample,gapdh,group)) %>% 
+  mutate_all(function(x){return(x/tb3$gapdh)})
+expression2 <- cbind(tb3 %>% select(sample,group),expression)
+expression2
+```
+
+
+```{r}
+expression3 <- expression2 %>% 
+  mutate_at(-c(1,2),function(x){return(x/x[standard])})
+expression3
+```
+
+```{r}
+expression4 <- expression3 %>% 
+  pivot_longer(!c(sample,group),names_to="target",values_to="expression")
+expression4
+```
+
+
+```{r}
+ggplot(data=expression4) +
+  facet_wrap(.~target,ncol=5) +
+  geom_bar(aes(x=sample,y=expression),stat="identity")
+```
+```{r}
+expression.summary <- expression4 %>% group_by(target,group) %>% summarize(mean=mean(expression),sd=sd(expression),se=sd(expression)/sqrt(length(expression)),max=max(expression),min=min(expression))
+expression.summary
+```
+```{r}
+ggplot(expression.summary) +
+  facet_wrap(.~target,ncol=5) +
+  geom_bar(aes(x=group,y=mean),stat="identity")
+```
+```{r}
+ggplot(expression.summary) +
+  facet_wrap(.~target,ncol=5) +
+  geom_bar(aes(x=group,y=mean),stat="identity",fill="grey") +
+  geom_errorbar(aes(x=group,ymin=mean-se,ymax=mean+se),width=0.2)
+```
+```{r}
+ggplot(expression4) +
+  facet_wrap(.~target,ncol=5) +
+  geom_bar(data=expression.summary,aes(x=group,y=mean),stat="identity",fill="grey") +
+  geom_signif(aes(x=group,y=expression), comparisons=list(c("WT","KO")), map_signif_level = FALSE, textsize=4, y_position=max(expression.summary$mean)*1.1) + 
+  coord_cartesian(ylim=c(0,max(expression.summary$mean)*1.4))
+```
+```{r}
+ggplot(expression4,aes(x=group,y=expression)) +
+  facet_wrap(.~target,ncol=5) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_signif(comparisons=list(c("WT","KO")), map_signif_level = FALSE,textsize=4,y_position=max(expression4$expression)*1.1) + 
+  geom_jitter(size = 0.5) +
+  coord_cartesian(ylim=c(0,max(expression4$expression)*1.2)) 
+```
+
+```{r}
+test <- expression4 %>% 
+  select(-sample) %>% 
+  pivot_wider(names_from = group,values_from = expression) %>% 
+  ungroup %>% 
+  group_by(target) %>% 
+  mutate(ttest=t.test(unlist(WT),unlist(KO))$p.value) %>% 
+  summarize(WT.max=max(unlist(WT)),KO.max=max(unlist(KO)),WT.mean=mean(unlist(WT)),KO.mean=mean(unlist(KO)),ttest=ttest) %>% 
+  group_by(target) %>% 
+  mutate(max.max=max(WT.max,KO.max),max.mean=max(WT.mean,KO.mean), ttest=round(ttest,digits=2))
+test
+```
+```{r}
+ggplot(expression4,aes(x=group,y=expression)) +
+  facet_wrap(.~target,ncol=5) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 0.5) +
+  geom_segment(data=test,aes(x="WT",xend="KO",y=max.max*1.2,yend=max.max*1.2)) +
+  geom_segment(data=test,aes(x="WT",xend="WT",y=WT.max*1.1,yend=max.max*1.2)) +
+  geom_segment(data=test,aes(x="KO",xend="KO",y=KO.max*1.1,yend=max.max*1.2)) +
+  coord_cartesian(ylim=c(0,max(expression4$expression)*1.3)) +
+  geom_text(data=test, aes(x=1.5,y=max.max*1.2+1,label=ttest))
+```
+```{r}
+ggplot(expression4) +
+  facet_wrap(.~target,ncol=5) +
+  geom_bar(data=expression.summary,aes(x=group,y=mean),stat="identity",fill="grey") +
+  geom_segment(data=test,aes(x="WT",xend="KO",y=max.mean*1.2,yend=max.mean*1.2)) +
+  geom_segment(data=test,aes(x="WT",xend="WT",y=WT.mean*1.1,yend=max.mean*1.2)) +
+  geom_segment(data=test,aes(x="KO",xend="KO",y=KO.mean*1.1,yend=max.mean*1.2)) +
+  coord_cartesian(ylim=c(0,max(expression.summary$mean)*1.3)) +
+  geom_text(data=test, aes(x=1.5,y=max.mean*1.2+0.25,label=ttest))
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
