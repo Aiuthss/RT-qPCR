@@ -29,7 +29,7 @@ tb
 
 ## 4. データを加工する
 ### 前処理
-1.  前のtableから2, 3, 10列目(サンプル番号, ターゲット遺伝子, Ct値)を抜き出す (select)
+1.  前のtableから2, 3, 10列目 (サンプル番号, ターゲット遺伝子, Ct値)を抜き出す (select)
 2.  一番下に要らない行があるので除く (drop_na)
 3.  列の名前を変更 (colnames() <- )
 ```{r message=FALSE}
@@ -58,9 +58,9 @@ tb2
 ```
 
 ### 整理して群情報をつける
-1.  target行を列名にして表を横に広げる (pivot_wider)
+1.  target列の値を列名にして表を横に広げる (pivot_wider)
 2.  sample順に並べ替える (arrange)
-3.  group行に群情報を追加する (mutate)
+3.  group列に群情報を追加する (mutate)
 
 ```{r message=FALSE}
 tb3 <- tb2 %>% 
@@ -72,10 +72,10 @@ tb3
 
 ### gapdhで発現量を補正する
 
-1.  sample, group, gapdh行以外を選択する (select)\
+1.  sample, group, gapdh列以外を選択する (select)\
     gapdh以外の遺伝子の発現量を抽出
 2.  各遺伝子の発現量をgapdhの発現量で割る (mutate_all)
-3.  sample, group行とgapdhで補正した各遺伝子の発現量を結合する (cbind)
+3.  sample, group列とgapdhで補正した各遺伝子の発現量の表を結合する (cbind)
 
 ```{r message=FALSE}
 expression <- tb3 %>% 
@@ -160,7 +160,7 @@ ggplot(expression.summary) +
 
 ### 5. t検定の結果をグラフにする (ちょっとむずい)
 #### t検定をする (描画用のパラメータも出す)
-1.  sample行以外を選択
+1.  sample列以外を選択
 2.  群を列名として表を横に開く (pivot_wider) \
   重複する値はリストになる
 3.  target列でグループ化
@@ -176,6 +176,7 @@ test <- expression4 %>%
   group_by(target) %>% 
   mutate(ttest=t.test(unlist(WT),unlist(KO))$p.value) %>% 
   summarize(WT.max=max(unlist(WT)),KO.max=max(unlist(KO)),WT.mean=mean(unlist(WT)),KO.mean=mean(unlist(KO)),ttest=ttest) %>% 
+  group_by(target) %>% 
   mutate(max.max=max(WT.max,KO.max),max.mean=max(WT.mean,KO.mean), ttest=round(ttest,digits=2))
 test
 ```
