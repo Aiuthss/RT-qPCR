@@ -1,22 +1,26 @@
 ---
 title: "RT-qPCR analysis sample"
-output: html_notebook
+author: "Atsushi Hara"
+data: 2021年5月28日
+output: pdf_document
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
-
+# ライブラリーを読み込む
 ```{r message=FALSE}
 library(tidyverse)
 library(ggsignif)
 ```
+
+# サンプル情報を入力
+## 1として調整するサンプル番号(standard), サンプルの群情報(group)を設定
 ```{r}
 standard=1
 group=factor(c(0,0,1,0,0,1,1,1,0,0,1,0,1,0),levels=c(0,1))
 levels(group) <- c("WT","KO")
 ```
 
+# サンプルを読み込む
+## 最初の７行はいらないので飛ばす
 ```{r message=FALSE}
 tb <- read_csv("sample2.csv", skip=7)
 tb

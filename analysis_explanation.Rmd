@@ -1,0 +1,222 @@
+---
+title: "RT-qPCR analysis sample"
+author: "Atsushi Hara"
+data: 2021年5月28日
+output:
+  html_document:
+    df_print: paged
+---
+
+## 1. ライブラリーを読み込む
+```{r message=FALSE}
+library(tidyverse)
+```
+
+## 2. サンプル情報を設定
+発現量の基準にするサンプル番号 (standard), サンプルの群情報 (group)を設定
+```{r}
+standard <- 1
+group <- factor(c(0,0,1,0,0,1,1,1,0,0,1,0,1,0),levels=c(0,1))
+levels(group) <- c("WT","KO")
+```
+
+## 3. サンプルを読み込む
+csvにしたRT-qPCRデータを読み込む (最初の７行はいらないので飛ばす)
+```{r message=FALSE}
+tb <- read_csv("sample2.csv", skip=7)
+tb
+```
+
+## 4. データを加工する
+### 前処理
+1.  前のtableから2, 3, 10列目(サンプル番号, ターゲット遺伝子, Ct値)を抜き出す (select)
+2.  一番下に要らない行があるので除く (drop_na)
+3.  列の名前を変更 (colnames() <- )
+```{r message=FALSE}
+tb2 <- tb %>%
+  select(2,3,10) %>% 
+  drop_na()
+
+colnames(tb2) <- c("sample","target","Ct")
+```
+
+### Ct値を発現量に変換してreplicateの平均を取る
+1.  サンプル番号を数字に変える (ex: Sample 1 → 1)
+2.  Ct値を発現量に変換 (expression = 2\**(-Ct))
+3.  Ct値は要らなくなったので、Ct値の列を落とす (-Ct)
+4.  サンプル番号, ターゲット遺伝子でグループ化する (replicateがグループになる)
+5.  replicateの中で発現量の平均を取る (mean(expression))
+```{r message=FALSE}
+tb2 <- tb2 %>% 
+  mutate(sample=parse_number(sample)) %>% 
+  mutate(expression=2**(-Ct)) %>% 
+  select(-Ct) %>% 
+  group_by(sample,target) %>% 
+  summarize(expression=mean(expression)) %>% 
+  ungroup()
+tb2
+```
+
+### 整理して群情報をつける
+1.  target行を列名にして表を横に広げる (pivot_wider)
+2.  sample順に並べ替える (arrange)
+3.  group行に群情報を追加する (mutate)
+
+```{r message=FALSE}
+tb3 <- tb2 %>% 
+  pivot_wider(names_from = target, values_from=expression) %>% 
+  arrange(sample) %>% 
+  mutate(group=group)
+tb3
+```
+
+### gapdhで発現量を補正する
+
+1.  sample, group, gapdh行以外を選択する (select)\
+    gapdh以外の遺伝子の発現量を抽出
+2.  各遺伝子の発現量をgapdhの発現量で割る (mutate_all)
+3.  sample, group行とgapdhで補正した各遺伝子の発現量を結合する (cbind)
+
+```{r message=FALSE}
+expression <- tb3 %>% 
+  select(!c(sample,gapdh,group)) %>% 
+  mutate_all(function(x){return(x/tb3$gapdh)})
+expression2 <- cbind(tb3 %>% select(sample,group),expression)
+expression2
+```
+
+### standardの発現が1.0になるように補正する
+
+sample, group列を除いて、standardの発現量で割る (x/x[standard])
+
+```{r message=FALSE}
+expression3 <- expression2 %>% 
+  mutate_at(-c(1,2),function(x){return(x/x[standard])})
+expression3
+```
+
+## 5. グラフ化する準備
+
+遺伝子名をtarget、発現量をexpressionとして表を縦に伸ばす (pivot_longer)
+
+```{r message=FALSE}
+expression4 <- expression3 %>% 
+  pivot_longer(!c(sample,group),names_to="target",values_to="expression")
+expression4
+```
+
+## 6. グラフ化
+
+### 1. サンプルごとの発現量
+
+1.  縦に伸ばした発現量の表をグラフ化 (data=expression4)
+2.  targetごとにグラフを分ける (facet_wrap)
+3.  xにサンプル番号、yに発現量を割り当てて棒グラフにする (geom_bar)\
+    グラフは積み上げずに分ける (stat="identity")
+
+```{r message=FALSE}
+ggplot(data=expression4) +
+  facet_wrap(.~target,ncol=5) +
+  geom_bar(aes(x=sample,y=expression),stat="identity")
+```
+
+### 2. 群内での各統計量を求める
+
+1.  target, groupでグループ化
+2.  各グループ内で平均 (mean), 標準偏差 (sd), 標準誤差 (se), 最大値 (max), 最小値 (min)を求める
+
+```{r message=FALSE}
+expression.summary <- expression4 %>% 
+  group_by(target,group) %>%
+  summarize(mean=mean(expression),sd=sd(expression),se=sd(expression)/sqrt(length(expression)),max=max(expression),min=min(expression))
+expression.summary
+```
+
+### 3. 各群の発現量平均をグラフ化
+
+1.  各統計量の表をグラフ化 (expression.summary)
+2.  targetでグラフを分ける (facet_wrap)
+3.  xを群、yを各群の発現量平均として棒グラフにする (geom_bar)
+
+```{r message=FALSE}
+ggplot(expression.summary) +
+  facet_wrap(.~target,ncol=5) +
+  geom_bar(aes(x=group,y=mean),stat="identity")
+```
+
+### 4. 3のグラフにエラーバーをつける
+
+1.  各統計量の表をグラフ化 (expression.summary)
+2.  targetでグラフを分ける (facet_wrap)
+3.  xを群、yを各群の発現量平均として棒グラフにする (geom_bar)
+4.  平均±標準誤差をymin, ymaxに割り当ててエラーバーを描く (geom_errorbar)
+
+```{r message=FALSE}
+ggplot(expression.summary) +
+  facet_wrap(.~target,ncol=5) +
+  geom_bar(aes(x=group,y=mean),stat="identity",fill="grey") +
+  geom_errorbar(aes(x=group,ymin=mean-se,ymax=mean+se),width=0.2)
+```
+
+### 5. t検定の結果をグラフにする (ちょっとむずい)
+#### t検定をする (描画用のパラメータも出す)
+1.  sample行以外を選択
+2.  群を列名として表を横に開く (pivot_wider) \
+  重複する値はリストになる
+3.  target列でグループ化
+4.  群間でt検定してp値を出す (t.test)\
+    群内の発現量最大/最少を出す
+5. 各遺伝子で最大の発現量 (max.max), 群内の発現量平均で最大のもの (max.mean)を出す\
+  p値を小数点2桁までにする (round)
+
+```{r message=FALSE}
+test <- expression4 %>% 
+  select(-sample) %>% 
+  pivot_wider(names_from = group,values_from = expression,values_fn=list) %>% 
+  group_by(target) %>% 
+  mutate(ttest=t.test(unlist(WT),unlist(KO))$p.value) %>% 
+  summarize(WT.max=max(unlist(WT)),KO.max=max(unlist(KO)),WT.mean=mean(unlist(WT)),KO.mean=mean(unlist(KO)),ttest=ttest) %>% 
+  mutate(max.max=max(WT.max,KO.max),max.mean=max(WT.mean,KO.mean), ttest=round(ttest,digits=2))
+test
+```
+
+#### 箱ひげ図を描く
+1. expression4を使い、xを群、yを発現量とする
+2. ターゲット遺伝子ごとにグラフを分ける (facet_wrap)
+3. 箱ひげ図を描く (geom_boxplot)
+4. 各発現量の点を追加する (geom_jitter)
+5. 検定結果のバーの平行成分を描く (geom_segment)
+6. 検定結果のバーの垂直成分を描く (geom_segment)
+7. p値を表示する (geom_text)
+```{r message=FALSE}
+ggplot(expression4,aes(x=group,y=expression)) +
+  facet_wrap(.~target,ncol=5) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 0.5) +
+  geom_segment(data=test,aes(x="WT",xend="KO",y=max.max*1.2,yend=max.max*1.2)) +
+  geom_segment(data=test,aes(x="WT",xend="WT",y=WT.max*1.1,yend=max.max*1.2)) +
+  geom_segment(data=test,aes(x="KO",xend="KO",y=KO.max*1.1,yend=max.max*1.2)) +
+  coord_cartesian(ylim=c(0,max(expression4$expression)*1.3)) +
+  geom_text(data=test, aes(x=1.5,y=max.max*1.2+1,label=ttest))
+```
+
+#### 棒グラフを描く
+1. expression4を使い、xを群、yを発現量とする
+2. ターゲット遺伝子ごとにグラフを分ける (facet_wrap)
+3. 棒グラフを描く (geom_bar)
+4. 各発現量の点を追加する (geom_jitter)
+5. 検定結果のバーの平行成分を描く (geom_segment)
+6. 検定結果のバーの垂直成分を描く (geom_segment)
+7. p値を表示する (geom_text)
+```{r message=FALSE}
+ggplot(expression4) +
+  facet_wrap(.~target,ncol=5) +
+  geom_bar(data=expression.summary,aes(x=group,y=mean),stat="identity",fill="grey") +
+  geom_segment(data=test,aes(x="WT",xend="KO",y=max.mean*1.2,yend=max.mean*1.2)) +
+  geom_segment(data=test,aes(x="WT",xend="WT",y=WT.mean*1.1,yend=max.mean*1.2)) +
+  geom_segment(data=test,aes(x="KO",xend="KO",y=KO.mean*1.1,yend=max.mean*1.2)) +
+  coord_cartesian(ylim=c(0,max(expression.summary$mean)*1.3)) +
+  geom_text(data=test, aes(x=1.5,y=max.mean*1.2+0.25,label=ttest))
+```
+
+# おわり
